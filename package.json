@@ -4,6 +4,14 @@
   "description": "Create and update Jira Cloud issues and log work from the terminal — with a Claude Code skill that logs your coding sessions to Jira.",
   "license": "MIT",
   "author": "Harsh Shah",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sharsh21/jira-cli.git"
+  },
+  "homepage": "https://github.com/sharsh21/jira-cli#readme",
+  "bugs": {
+    "url": "https://github.com/sharsh21/jira-cli/issues"
+  },
   "keywords": [
     "jira",
     "jira-cloud",

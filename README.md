@@ -46,7 +46,7 @@ Claude:  Created ENG-123: https://yoursite.atlassian.net/browse/ENG-123
 ### Step 1: Clone and install the CLI
 
 ```bash
-git clone https://github.com/<your-username>/jira-cli.git
+git clone https://github.com/sharsh21/jira-cli.git
 cd jira-cli
 npm install
 npm run build
