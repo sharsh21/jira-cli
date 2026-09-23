@@ -1,0 +1,41 @@
+{
+  "name": "jira-cli",
+  "version": "0.1.0",
+  "description": "Create and update Jira Cloud issues and log work from the terminal — with a Claude Code skill that logs your coding sessions to Jira.",
+  "license": "MIT",
+  "author": "Harsh Shah",
+  "keywords": [
+    "jira",
+    "jira-cloud",
+    "cli",
+    "worklog",
+    "claude-code",
+    "claude-skill"
+  ],
+  "private": true,
+  "type": "module",
+  "bin": {
+    "jira-cli": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "dev": "tsc -p . --watch"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.4"
+  }
+}
