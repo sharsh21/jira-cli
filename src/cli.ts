@@ -1,201 +1,286 @@
 #!/usr/bin/env node
-import { Command } from "commander";
-import readline from "node:readline/promises";
-import { stdin, stdout } from "node:process";
-import { loadConfig, saveConfig, configPath, JiraConfig } from "./config.js";
-import { JiraClient, extractErrorMessage } from "./jiraClient.js";
-import { textToADF } from "./adf.js";
+import { createRequire } from "node:module";
+import { Command, InvalidArgumentError } from "commander";
+import { textToAdf } from "./adf.js";
+import { configPath, loadConfig, saveConfig, JiraConfig } from "./config.js";
+import { CliError, formatError } from "./errors.js";
+import {
+  normalizeBaseUrl,
+  parseDate,
+  parseDuration,
+  parseIssueKey,
+  toJiraDateTime,
+} from "./format.js";
+import { JiraClient } from "./jiraClient.js";
+import { Prompter } from "./prompt.js";
 
-const program = new Command();
-program.name("jira-cli").description("Create/update Jira issues and log work from the terminal");
+const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
 
-async function prompt(rl: readline.Interface, question: string, def?: string) {
-  const suffix = def ? ` (${def})` : "";
-  const answer = await rl.question(`${question}${suffix}: `);
-  return answer.trim() || def || "";
-}
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-async function resolveAssignee(
-  client: JiraClient,
-  assignee: string | undefined,
-  config: JiraConfig
-): Promise<string | undefined> {
-  if (!assignee || assignee === "me") return config.myAccountId;
-  const users = await client.searchUser(assignee);
-  if (users.length === 0) {
-    throw new Error(`No Jira user found matching "${assignee}"`);
-  }
-  return users[0].accountId;
-}
-
-const configCmd = program.command("config").description("Manage jira-cli configuration");
-
-configCmd
-  .command("init")
-  .description("Interactively set up Jira Cloud credentials")
-  .action(async () => {
-    const rl = readline.createInterface({ input: stdin, output: stdout });
+/** Wraps a command action so every failure prints one clean line and exits non-zero. */
+function run<Args extends unknown[]>(action: (...args: Args) => Promise<void>) {
+  return async (...args: Args): Promise<void> => {
     try {
-      const baseUrl = await prompt(rl, "Jira base URL (e.g. https://yoursite.atlassian.net)");
-      const email = await prompt(rl, "Your Jira account email");
-      const apiToken = await prompt(rl, "API token (create at id.atlassian.com/manage-profile/security/api-tokens)");
-      const defaultProjectKey = await prompt(rl, "Default project key (optional)");
-      rl.close();
-
-      const draft: JiraConfig = {
-        baseUrl,
-        email,
-        apiToken,
-        myAccountId: "",
-        defaultProjectKey: defaultProjectKey || undefined,
-      };
-
-      const client = new JiraClient(draft);
-      const me = await client.myself();
-      draft.myAccountId = me.accountId;
-
-      await saveConfig(draft);
-      console.log(`Saved config to ${configPath()} (verified as ${me.displayName}).`);
+      await action(...args);
     } catch (err) {
-      rl.close();
-      console.error(`Config setup failed: ${extractErrorMessage(err)}`);
+      console.error(`Error: ${formatError(err)}`);
+      if (process.env.JIRA_CLI_DEBUG && err instanceof Error && !(err instanceof CliError)) {
+        console.error(err.stack);
+      }
       process.exitCode = 1;
     }
-  });
+  };
+}
 
-configCmd
+/** Adapts a validator so commander reports its failures as normal usage errors. */
+function validated<T>(parse: (value: string) => T) {
+  return (value: string): T => {
+    try {
+      return parse(value);
+    } catch (err) {
+      throw new InvalidArgumentError(formatError(err));
+    }
+  };
+}
+
+async function connect(): Promise<{ config: JiraConfig; client: JiraClient }> {
+  const config = await loadConfig();
+  return { config, client: new JiraClient(config) };
+}
+
+function issueUrl(config: JiraConfig, issueKey: string): string {
+  return `${config.baseUrl.replace(/\/+$/, "")}/browse/${issueKey}`;
+}
+
+async function resolveAssignee(client: JiraClient, config: JiraConfig, value: string): Promise<string> {
+  if (value.toLowerCase() === "me") return config.myAccountId;
+
+  const users = (await client.searchUsers(value)).filter((user) => user.active !== false);
+  const exact = users.filter((user) => user.emailAddress?.toLowerCase() === value.toLowerCase());
+
+  if (exact.length === 1) return exact[0].accountId;
+  if (users.length === 1) return users[0].accountId;
+  if (users.length === 0) throw new CliError(`No active Jira user matches "${value}".`);
+
+  const names = users.slice(0, 5).map((user) => user.displayName).join(", ");
+  throw new CliError(`"${value}" matches several users (${names}). Use their full email address.`);
+}
+
+async function resolveIssueTypeId(
+  client: JiraClient,
+  projectKey: string,
+  typeName: string | undefined,
+  subtask: boolean
+): Promise<string> {
+  const types = await client.getProjectIssueTypes(projectKey);
+
+  if (subtask) {
+    const subtaskType = types.find((type) => type.subtask);
+    if (!subtaskType) throw new CliError(`Project ${projectKey} does not have subtasks enabled.`);
+    return subtaskType.id;
+  }
+
+  const wanted = (typeName ?? "Task").toLowerCase();
+  const match = types.find((type) => !type.subtask && type.name.toLowerCase() === wanted);
+  if (!match) {
+    const available = types.filter((type) => !type.subtask).map((type) => type.name);
+    throw new CliError(
+      `Project ${projectKey} has no issue type "${typeName}". Available: ${available.join(", ")}.`
+    );
+  }
+  return match.id;
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
+const program = new Command()
+  .name("jira-cli")
+  .description("Create and update Jira Cloud issues and log work from the terminal.")
+  .version(version)
+  .showHelpAfterError("(add --help for usage)");
+
+const configCommand = program.command("config").description("Manage your Jira connection settings");
+
+configCommand
+  .command("init")
+  .description("Set up or update your Jira site, email, and API token")
+  .action(
+    run(async () => {
+      const existing = await loadConfig().catch(() => undefined);
+      const prompter = new Prompter();
+
+      let draft: JiraConfig;
+      try {
+        const baseUrl = normalizeBaseUrl(
+          await prompter.ask("Jira site URL (e.g. https://yoursite.atlassian.net)", existing?.baseUrl)
+        );
+        const email = await prompter.ask("Jira account email", existing?.email);
+        const apiToken =
+          (await prompter.askSecret(
+            existing
+              ? "API token (leave blank to keep the current one)"
+              : "API token (create one at https://id.atlassian.com/manage-profile/security/api-tokens)"
+          )) || existing?.apiToken || "";
+        const defaultProjectKey = await prompter.ask(
+          "Default project key (optional)",
+          existing?.defaultProjectKey
+        );
+
+        if (!email || !apiToken) throw new CliError("Email and API token are required.");
+
+        draft = {
+          baseUrl,
+          email,
+          apiToken,
+          myAccountId: "",
+          defaultProjectKey: defaultProjectKey ? defaultProjectKey.toUpperCase() : undefined,
+        };
+      } finally {
+        prompter.close();
+      }
+
+      const me = await new JiraClient(draft).myself();
+      draft.myAccountId = me.accountId;
+      await saveConfig(draft);
+      console.log(`Signed in as ${me.displayName}. Settings saved to ${configPath()}.`);
+    })
+  );
+
+configCommand
   .command("path")
-  .description("Print the config file location")
-  .action(() => {
-    console.log(configPath());
-  });
+  .description("Print the location of the config file")
+  .action(() => console.log(configPath()));
 
 program
   .command("whoami")
-  .description("Verify credentials and show the authenticated Jira user")
-  .action(async () => {
-    try {
-      const config = await loadConfig();
-      const client = new JiraClient(config);
+  .description("Check your credentials and show the signed-in Jira user")
+  .action(
+    run(async () => {
+      const { client } = await connect();
       const me = await client.myself();
-      console.log(`${me.displayName} <${me.emailAddress}> (${me.accountId})`);
-    } catch (err) {
-      console.error(extractErrorMessage(err));
-      process.exitCode = 1;
-    }
-  });
+      const email = me.emailAddress ? ` <${me.emailAddress}>` : "";
+      console.log(`${me.displayName}${email} (${me.accountId})`);
+    })
+  );
 
 program
   .command("create")
-  .description("Create a Jira issue (task/story/bug), optionally as a subtask of a parent")
-  .requiredOption("--summary <text>", "Issue summary")
-  .option("--type <type>", "Issue type: Task, Story, Bug, Sub-task", "Task")
-  .option("--project <key>", "Project key (defaults to config default)")
-  .option("--description <text>", "Issue description")
-  .option("--parent <key>", "Parent issue key (implies a subtask)")
-  .option("--assignee <emailOrMe>", "Assignee email, or 'me'")
-  .option("--time <estimate>", "Original time estimate, e.g. 2h, 1d")
-  .action(async (opts) => {
-    try {
-      const config = await loadConfig();
-      const client = new JiraClient(config);
-
-      const projectKey = opts.project || config.defaultProjectKey;
-      if (!projectKey) {
-        throw new Error("No --project given and no defaultProjectKey configured.");
+  .description("Create an issue, or a subtask with --parent")
+  .requiredOption("--summary <text>", "issue title")
+  .option("--type <name>", "issue type, e.g. Task, Story, Bug (default: Task)")
+  .option("--project <key>", "project key (default: from config)")
+  .option("--description <text>", "plain-text description")
+  .option("--parent <key>", "create a subtask under this issue", validated(parseIssueKey))
+  .option("--assignee <email|me>", "assignee's email address, or 'me'")
+  .option("--time <estimate>", "original estimate, e.g. 2h, 1d", validated(parseDuration))
+  .action(
+    run(async (opts: {
+      summary: string;
+      type?: string;
+      project?: string;
+      description?: string;
+      parent?: string;
+      assignee?: string;
+      time?: string;
+    }) => {
+      if (opts.parent && opts.type) {
+        throw new CliError("--type can't be combined with --parent. Subtasks use the project's subtask type.");
       }
 
-      const issueType = opts.parent ? "Sub-task" : opts.type;
+      const { config, client } = await connect();
+
+      let projectKey = opts.project?.toUpperCase() ?? config.defaultProjectKey;
+      if (opts.parent) {
+        const parentProject = await client.getIssueProjectKey(opts.parent);
+        if (opts.project && projectKey !== parentProject) {
+          throw new CliError(`Subtasks must be in the parent's project (${parentProject}).`);
+        }
+        projectKey = parentProject;
+      }
+      if (!projectKey) {
+        throw new CliError("No project given. Pass --project or set a default with 'jira-cli config init'.");
+      }
 
       const fields: Record<string, unknown> = {
         project: { key: projectKey },
         summary: opts.summary,
-        issuetype: { name: issueType },
+        issuetype: { id: await resolveIssueTypeId(client, projectKey, opts.type, Boolean(opts.parent)) },
       };
-
-      if (opts.description) fields.description = textToADF(opts.description);
+      if (opts.description) fields.description = textToAdf(opts.description);
       if (opts.parent) fields.parent = { key: opts.parent };
       if (opts.time) fields.timetracking = { originalEstimate: opts.time };
-
-      const accountId = await resolveAssignee(client, opts.assignee, config);
-      if (accountId) fields.assignee = { id: accountId };
+      if (opts.assignee) fields.assignee = { id: await resolveAssignee(client, config, opts.assignee) };
 
       const issue = await client.createIssue(fields);
-      console.log(`Created ${issue.key}: ${config.baseUrl.replace(/\/$/, "")}/browse/${issue.key}`);
-    } catch (err) {
-      console.error(extractErrorMessage(err));
-      process.exitCode = 1;
-    }
-  });
+      console.log(`Created ${issue.key}: ${issueUrl(config, issue.key)}`);
+    })
+  );
 
 program
-  .command("log-work <issueKey>")
-  .description("Add a worklog entry to an existing issue")
-  .requiredOption("--time <duration>", "Time spent, e.g. 2h, 30m, 1d")
-  .option("--comment <text>", "Worklog comment")
-  .option("--started <isoDate>", "When the work started (ISO 8601); defaults to now")
-  .action(async (issueKey, opts) => {
-    try {
-      const config = await loadConfig();
-      const client = new JiraClient(config);
-
-      const body: { timeSpent: string; comment?: unknown; started?: string } = {
+  .command("log-work")
+  .description("Log time spent on an issue")
+  .argument("<issueKey>", "issue to log work on, e.g. ENG-123", validated(parseIssueKey))
+  .requiredOption("--time <duration>", "time spent, e.g. 1h30m, 45m", validated(parseDuration))
+  .option("--comment <text>", "what you worked on")
+  .option("--started <date>", "when the work started, ISO 8601 (default: now)", validated(parseDate))
+  .action(
+    run(async (issueKey: string, opts: { time: string; comment?: string; started?: Date }) => {
+      const { client } = await connect();
+      await client.addWorklog(issueKey, {
         timeSpent: opts.time,
-      };
-      if (opts.comment) body.comment = textToADF(opts.comment);
-      if (opts.started) body.started = opts.started;
-
-      await client.addWorklog(issueKey, body);
+        started: toJiraDateTime(opts.started ?? new Date()),
+        ...(opts.comment ? { comment: textToAdf(opts.comment) } : {}),
+      });
       console.log(`Logged ${opts.time} on ${issueKey}.`);
-    } catch (err) {
-      console.error(extractErrorMessage(err));
-      process.exitCode = 1;
-    }
-  });
+    })
+  );
 
 program
-  .command("update <issueKey>")
-  .description("Update fields on an existing issue")
-  .option("--summary <text>", "New summary")
-  .option("--description <text>", "New description")
-  .option("--assignee <emailOrMe>", "New assignee email, or 'me'")
-  .option("--status <name>", "Transition to this status name (e.g. 'In Progress', 'Done')")
-  .action(async (issueKey, opts) => {
-    try {
-      const config = await loadConfig();
-      const client = new JiraClient(config);
+  .command("update")
+  .description("Edit an issue or move it to a new status")
+  .argument("<issueKey>", "issue to update, e.g. ENG-123", validated(parseIssueKey))
+  .option("--summary <text>", "new title")
+  .option("--description <text>", "new plain-text description")
+  .option("--assignee <email|me>", "new assignee's email address, or 'me'")
+  .option("--status <name>", "move to this status, e.g. 'In Progress', 'Done'")
+  .action(
+    run(async (
+      issueKey: string,
+      opts: { summary?: string; description?: string; assignee?: string; status?: string }
+    ) => {
+      if (!opts.summary && !opts.description && !opts.assignee && !opts.status) {
+        throw new CliError("Nothing to update. Pass --summary, --description, --assignee, or --status.");
+      }
+
+      const { config, client } = await connect();
+
+      // Find the transition first so a bad status name fails before anything changes.
+      let transitionId: string | undefined;
+      if (opts.status) {
+        const wanted = opts.status.toLowerCase();
+        const transitions = await client.getTransitions(issueKey);
+        transitionId = transitions.find((t) => t.name.toLowerCase() === wanted)?.id;
+        if (!transitionId) {
+          const available = transitions.map((t) => t.name).join(", ") || "none";
+          throw new CliError(`Can't move ${issueKey} to "${opts.status}". Available: ${available}.`);
+        }
+      }
 
       const fields: Record<string, unknown> = {};
       if (opts.summary) fields.summary = opts.summary;
-      if (opts.description) fields.description = textToADF(opts.description);
-      if (opts.assignee) {
-        const accountId = await resolveAssignee(client, opts.assignee, config);
-        fields.assignee = { id: accountId };
-      }
-      if (Object.keys(fields).length > 0) {
-        await client.updateIssue(issueKey, fields);
-      }
+      if (opts.description) fields.description = textToAdf(opts.description);
+      if (opts.assignee) fields.assignee = { id: await resolveAssignee(client, config, opts.assignee) };
 
-      if (opts.status) {
-        const transitions = await client.getTransitions(issueKey);
-        const match = transitions.find(
-          (t) => t.name.toLowerCase() === opts.status.toLowerCase()
-        );
-        if (!match) {
-          throw new Error(
-            `No transition named "${opts.status}" available. Options: ${transitions
-              .map((t) => t.name)
-              .join(", ")}`
-          );
-        }
-        await client.transitionIssue(issueKey, match.id);
-      }
+      if (Object.keys(fields).length > 0) await client.updateIssue(issueKey, fields);
+      if (transitionId) await client.transitionIssue(issueKey, transitionId);
 
-      console.log(`Updated ${issueKey}.`);
-    } catch (err) {
-      console.error(extractErrorMessage(err));
-      process.exitCode = 1;
-    }
-  });
+      console.log(`Updated ${issueKey}: ${issueUrl(config, issueKey)}`);
+    })
+  );
 
-program.parseAsync(process.argv);
+await program.parseAsync(process.argv);

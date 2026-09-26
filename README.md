@@ -1,7 +1,8 @@
 # jira-cli
 
+[![CI](https://github.com/sharsh21/jira-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/sharsh21/jira-cli/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Node.js 18+](https://img.shields.io/badge/node-%3E%3D18-brightgreen)
+![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
 
 Log your work to Jira Cloud from the terminal, or let [Claude Code](https://claude.com/claude-code) do it for you with the `/log-jira` skill.
 
@@ -15,7 +16,7 @@ Claude:  Created ENG-123 and logged 1h30m.
 
 ## Install
 
-You need Node.js 18+, a Jira Cloud site, and an [API token](https://id.atlassian.com/manage-profile/security/api-tokens).
+You need Node.js 20+, a Jira Cloud site, and an [API token](https://id.atlassian.com/manage-profile/security/api-tokens).
 
 ```bash
 git clone https://github.com/sharsh21/jira-cli.git
@@ -52,7 +53,7 @@ Your credentials are saved to `~/.jira-cli/config.json` on your machine. Don't s
 
 ## Contributing
 
-Issues and pull requests are welcome.
+Issues and pull requests are welcome. Run `npm test` before opening a PR.
 
 ## License
 

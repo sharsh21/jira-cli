@@ -1,15 +1,52 @@
 import axios, { AxiosInstance } from "axios";
-import { JiraConfig } from "./config.js";
 
+export interface JiraCredentials {
+  baseUrl: string;
+  email: string;
+  apiToken: string;
+}
+
+export interface JiraUser {
+  accountId: string;
+  displayName: string;
+  emailAddress?: string;
+  active?: boolean;
+}
+
+export interface IssueType {
+  id: string;
+  name: string;
+  subtask: boolean;
+}
+
+export interface Transition {
+  id: string;
+  name: string;
+}
+
+export interface CreatedIssue {
+  id: string;
+  key: string;
+  self: string;
+}
+
+export interface WorklogInput {
+  timeSpent: string;
+  started: string;
+  comment?: unknown;
+}
+
+const REQUEST_TIMEOUT_MS = 30_000;
+
+/** Minimal client for the Jira Cloud REST API v3. */
 export class JiraClient {
-  private http: AxiosInstance;
+  private readonly http: AxiosInstance;
 
-  constructor(config: JiraConfig) {
-    const auth = Buffer.from(`${config.email}:${config.apiToken}`).toString(
-      "base64"
-    );
+  constructor(credentials: JiraCredentials) {
+    const auth = Buffer.from(`${credentials.email}:${credentials.apiToken}`).toString("base64");
     this.http = axios.create({
-      baseURL: `${config.baseUrl.replace(/\/$/, "")}/rest/api/3`,
+      baseURL: `${credentials.baseUrl.replace(/\/+$/, "")}/rest/api/3`,
+      timeout: REQUEST_TIMEOUT_MS,
       headers: {
         Authorization: `Basic ${auth}`,
         Accept: "application/json",
@@ -18,63 +55,52 @@ export class JiraClient {
     });
   }
 
-  async myself() {
-    const res = await this.http.get("/myself");
+  async myself(): Promise<JiraUser> {
+    const res = await this.http.get<JiraUser>("/myself");
     return res.data;
   }
 
-  async searchUser(query: string) {
-    const res = await this.http.get("/user/search", { params: { query } });
-    return res.data as Array<{ accountId: string; displayName: string; emailAddress?: string }>;
-  }
-
-  async createIssue(fields: Record<string, unknown>) {
-    const res = await this.http.post("/issue", { fields });
-    return res.data as { id: string; key: string; self: string };
-  }
-
-  async getIssue(issueKey: string) {
-    const res = await this.http.get(`/issue/${issueKey}`);
+  async searchUsers(query: string): Promise<JiraUser[]> {
+    const res = await this.http.get<JiraUser[]>("/user/search", { params: { query } });
     return res.data;
   }
 
-  async updateIssue(issueKey: string, fields: Record<string, unknown>) {
-    await this.http.put(`/issue/${issueKey}`, { fields });
+  async getProjectIssueTypes(projectKey: string): Promise<IssueType[]> {
+    const res = await this.http.get<{ issueTypes: IssueType[] }>(`/project/${encodeURIComponent(projectKey)}`);
+    return res.data.issueTypes;
   }
 
-  async addWorklog(
-    issueKey: string,
-    body: { timeSpent: string; comment?: unknown; started?: string }
-  ) {
-    const res = await this.http.post(`/issue/${issueKey}/worklog`, body);
+  async getIssueProjectKey(issueKey: string): Promise<string> {
+    const res = await this.http.get<{ fields: { project: { key: string } } }>(
+      `/issue/${encodeURIComponent(issueKey)}`,
+      { params: { fields: "project" } }
+    );
+    return res.data.fields.project.key;
+  }
+
+  async createIssue(fields: Record<string, unknown>): Promise<CreatedIssue> {
+    const res = await this.http.post<CreatedIssue>("/issue", { fields });
     return res.data;
   }
 
-  async getTransitions(issueKey: string) {
-    const res = await this.http.get(`/issue/${issueKey}/transitions`);
-    return res.data.transitions as Array<{ id: string; name: string }>;
+  async updateIssue(issueKey: string, fields: Record<string, unknown>): Promise<void> {
+    await this.http.put(`/issue/${encodeURIComponent(issueKey)}`, { fields });
   }
 
-  async transitionIssue(issueKey: string, transitionId: string) {
-    await this.http.post(`/issue/${issueKey}/transitions`, {
+  async addWorklog(issueKey: string, worklog: WorklogInput): Promise<void> {
+    await this.http.post(`/issue/${encodeURIComponent(issueKey)}/worklog`, worklog);
+  }
+
+  async getTransitions(issueKey: string): Promise<Transition[]> {
+    const res = await this.http.get<{ transitions: Transition[] }>(
+      `/issue/${encodeURIComponent(issueKey)}/transitions`
+    );
+    return res.data.transitions;
+  }
+
+  async transitionIssue(issueKey: string, transitionId: string): Promise<void> {
+    await this.http.post(`/issue/${encodeURIComponent(issueKey)}/transitions`, {
       transition: { id: transitionId },
     });
   }
-}
-
-export function extractErrorMessage(err: unknown): string {
-  if (axios.isAxiosError(err)) {
-    const data = err.response?.data;
-    if (data) {
-      const messages = (data as any).errorMessages;
-      const errors = (data as any).errors;
-      const parts = [
-        ...(Array.isArray(messages) ? messages : []),
-        ...(errors ? Object.entries(errors).map(([k, v]) => `${k}: ${v}`) : []),
-      ];
-      if (parts.length) return parts.join("; ");
-    }
-    return err.message;
-  }
-  return err instanceof Error ? err.message : String(err);
 }
