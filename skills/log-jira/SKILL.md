@@ -26,8 +26,8 @@ This skill wraps a local CLI tool called `jira-cli` (a Node/TypeScript tool from
    - To create an issue:
      `jira-cli create --type <Task|Story|Bug> --summary "<summary>" --description "<full summary/details>" [--parent <KEY>] [--assignee <email-or-me>] [--time <estimate>]`
      This prints the new issue key and URL — capture the key for the next step.
-   - To log work (always, once you have an issue key — new or existing), explicitly pass `--started` set to today's date at the current local time in ISO 8601 (e.g. via `date -Iseconds`) so the worklog's start date is today rather than silently relying on the CLI's own default:
-     `jira-cli log-work <ISSUE-KEY> --time <timeSpent> --comment "<summary>" --started "<today's ISO 8601 datetime>"`
+   - To log work (always, once you have an issue key — new or existing). The start time defaults to now; only pass `--started "<ISO 8601 datetime>"` if the user says the work happened at a different time:
+     `jira-cli log-work <ISSUE-KEY> --time <timeSpent> --comment "<summary>"`
    - To reassign or change status on an existing issue, use `jira-cli update <ISSUE-KEY> --assignee <email-or-me> --status "<Status Name>"` as needed.
 
 5. **Report back** the issue key, its URL, and what was logged (estimate/time/assignee). If any CLI call fails, show the actual error message from the tool — don't guess at the cause.
