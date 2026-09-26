@@ -55,7 +55,10 @@ describe("toJiraDateTime", () => {
 describe("normalizeBaseUrl", () => {
   it("strips paths and trailing slashes", () => {
     assert.equal(normalizeBaseUrl("https://acme.atlassian.net/"), "https://acme.atlassian.net");
-    assert.equal(normalizeBaseUrl(" https://acme.atlassian.net/jira "), "https://acme.atlassian.net");
+    assert.equal(
+      normalizeBaseUrl(" https://acme.atlassian.net/jira "),
+      "https://acme.atlassian.net",
+    );
   });
 
   it("requires https", () => {

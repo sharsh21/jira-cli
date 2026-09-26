@@ -33,6 +33,7 @@ This skill wraps a local CLI tool called `jira-cli` (a Node/TypeScript tool from
 5. **Report back** the issue key, its URL, and what was logged (estimate/time/assignee). If any CLI call fails, show the actual error message from the tool — don't guess at the cause.
 
 ## Notes
+
 - Never invent an issue key, project key, or accountId — these must come from the user or from a CLI call's output.
 - Time strings must be in Jira format: `w`/`d`/`h`/`m` (e.g. `3h 30m`, `1d`), not "1.5 hours".
 - Project key defaults to the one set in `jira-cli config init` if the user doesn't specify one and it's ambiguous, ask.

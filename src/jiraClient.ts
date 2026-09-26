@@ -66,14 +66,16 @@ export class JiraClient {
   }
 
   async getProjectIssueTypes(projectKey: string): Promise<IssueType[]> {
-    const res = await this.http.get<{ issueTypes: IssueType[] }>(`/project/${encodeURIComponent(projectKey)}`);
+    const res = await this.http.get<{ issueTypes: IssueType[] }>(
+      `/project/${encodeURIComponent(projectKey)}`,
+    );
     return res.data.issueTypes;
   }
 
   async getIssueProjectKey(issueKey: string): Promise<string> {
     const res = await this.http.get<{ fields: { project: { key: string } } }>(
       `/issue/${encodeURIComponent(issueKey)}`,
-      { params: { fields: "project" } }
+      { params: { fields: "project" } },
     );
     return res.data.fields.project.key;
   }
@@ -93,7 +95,7 @@ export class JiraClient {
 
   async getTransitions(issueKey: string): Promise<Transition[]> {
     const res = await this.http.get<{ transitions: Transition[] }>(
-      `/issue/${encodeURIComponent(issueKey)}/transitions`
+      `/issue/${encodeURIComponent(issueKey)}/transitions`,
     );
     return res.data.transitions;
   }

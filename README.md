@@ -53,10 +53,17 @@ Your credentials are saved to `~/.jira-cli/config.json` on your machine. Don't s
 
 ## Contributing
 
-Issues and pull requests are welcome. Run `npm test` before opening a PR.
+Issues and pull requests are welcome. Before opening a PR, run:
+
+```bash
+npm run format    # format the code with Prettier
+npm test          # build and run the tests
+```
+
+CI runs `npm run format:check` and `npm test` on every pull request. A PR can't be merged until both pass.
 
 ## License
 
 [MIT](LICENSE) © 2026 Harsh Shah
 
-*Not affiliated with Atlassian or Anthropic. Jira is a trademark of Atlassian.*
+_Not affiliated with Atlassian or Anthropic. Jira is a trademark of Atlassian._

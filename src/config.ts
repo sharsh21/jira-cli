@@ -34,14 +34,18 @@ export async function loadConfig(): Promise<JiraConfig> {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new CliError(`${CONFIG_PATH} is not valid JSON. Run 'jira-cli config init' to recreate it.`);
+    throw new CliError(
+      `${CONFIG_PATH} is not valid JSON. Run 'jira-cli config init' to recreate it.`,
+    );
   }
 
   const config = parsed as Partial<JiraConfig>;
-  const missing = REQUIRED_FIELDS.filter((field) => typeof config[field] !== "string" || !config[field]);
+  const missing = REQUIRED_FIELDS.filter(
+    (field) => typeof config[field] !== "string" || !config[field],
+  );
   if (missing.length > 0) {
     throw new CliError(
-      `${CONFIG_PATH} is missing ${missing.join(", ")}. Run 'jira-cli config init' to recreate it.`
+      `${CONFIG_PATH} is missing ${missing.join(", ")}. Run 'jira-cli config init' to recreate it.`,
     );
   }
   return config as JiraConfig;

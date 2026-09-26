@@ -7,7 +7,7 @@ describe("textToAdf", () => {
     const doc = textToAdf("First line\r\n\n  \nSecond line");
     assert.deepEqual(
       doc.content.map((p) => p.content[0]?.text),
-      ["First line", "Second line"]
+      ["First line", "Second line"],
     );
   });
 

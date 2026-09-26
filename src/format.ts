@@ -8,7 +8,7 @@ export function parseDuration(value: string): string {
   const trimmed = value.trim();
   if (!DURATION_PATTERN.test(trimmed)) {
     throw new CliError(
-      `Invalid duration "${value}". Use Jira units w/d/h/m, for example "2h", "1d" or "1h 30m".`
+      `Invalid duration "${value}". Use Jira units w/d/h/m, for example "2h", "1d" or "1h 30m".`,
     );
   }
   return trimmed;
@@ -55,7 +55,9 @@ export function normalizeBaseUrl(value: string): string {
   try {
     url = new URL(value.trim());
   } catch {
-    throw new CliError(`Invalid URL "${value}". Expected something like https://yoursite.atlassian.net`);
+    throw new CliError(
+      `Invalid URL "${value}". Expected something like https://yoursite.atlassian.net`,
+    );
   }
   if (url.protocol !== "https:") {
     throw new CliError("The Jira URL must start with https://");
